@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -30,6 +31,13 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 	release := s.limiter.Acquire(e.Type == model.FallWarn)
 	s.store.Append(e)
 	release()
+
+	if s.durableLog != nil {
+		// Append buffers internally and flushes in batches.
+		if err := s.durableLog.Append(e); err != nil {
+			log.Printf("durable log append failed (event kept in memory, not yet durable): %v", err)
+		}
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }

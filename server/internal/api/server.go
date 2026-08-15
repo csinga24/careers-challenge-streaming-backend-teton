@@ -6,23 +6,47 @@ import (
 	"log"
 	"net/http"
 
+	"teton-streaming-backend/internal/durablelog"
 	"teton-streaming-backend/internal/intake"
 	"teton-streaming-backend/internal/store"
 )
 
 type Server struct {
-	mux     *http.ServeMux
-	store   *store.MemoryStore
-	broker  *alarmBroker
-	limiter *intake.Limiter
+	mux        *http.ServeMux
+	store      store.Store
+	durableLog durablelog.Log // nil if running without one (tests, no DATABASE_URL)
+	broker     *alarmBroker
+	limiter    *intake.Limiter
 }
 
+// New builds a Server backed by an in-memory store, with no durable log —
+// state doesn't survive a restart. Used by tests and when DATABASE_URL
+// isn't set.
 func New() *Server {
+	return NewWithStore(store.NewMemoryStore())
+}
+
+// NewWithStore builds a Server backed by any Store implementation, with
+// no durable log.
+func NewWithStore(st store.Store) *Server {
+	return newServer(st, nil)
+}
+
+// NewWithDurableLog builds a Server whose accepted events are also
+// written to a durable log (async, behind the synchronous store write),
+// for restart correctness. st should already be populated by replaying
+// log before this is called, so reads are correct from the first request.
+func NewWithDurableLog(st store.Store, log durablelog.Log) *Server {
+	return newServer(st, log)
+}
+
+func newServer(st store.Store, log durablelog.Log) *Server {
 	s := &Server{
-		mux:     http.NewServeMux(),
-		store:   store.NewMemoryStore(),
-		broker:  newAlarmBroker(),
-		limiter: intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
+		mux:        http.NewServeMux(),
+		store:      st,
+		durableLog: log,
+		broker:     newAlarmBroker(),
+		limiter:    intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
 	}
 	s.routes()
 	go s.flushAlarmsLoop()
