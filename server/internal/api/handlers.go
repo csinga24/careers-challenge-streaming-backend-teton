@@ -8,7 +8,11 @@ import (
 	"teton-streaming-backend/internal/model"
 )
 
+const maxEventBodyBytes = 1 << 16 // 64KiB; real events are ~150-250B
+
 func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxEventBodyBytes)
+
 	var e model.Event
 	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: " + err.Error()})
@@ -23,7 +27,10 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release := s.limiter.Acquire(e.Type == model.FallWarn)
 	s.store.Append(e)
+	release()
+
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 

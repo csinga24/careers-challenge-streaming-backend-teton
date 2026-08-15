@@ -34,7 +34,11 @@ is instead resolved per endpoint at read time.
 
 ## Backpressure
 
-(What happens during a 10x burst. What you delay, what you prioritize.)
+Backpressure under burst is a bounded, priority-aware concurrency limiter
+rather than a queue+worker pool, load shedding, or a broker. It keeps
+writes synchronous (preserving read-your-writes) while still delaying
+producers instead of dropping events, which a queue or shedding would
+either complicate or violate outright.
 
 ## Restart correctness
 

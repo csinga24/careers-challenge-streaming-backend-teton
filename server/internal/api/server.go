@@ -6,17 +6,24 @@ import (
 	"log"
 	"net/http"
 
+	"teton-streaming-backend/internal/intake"
 	"teton-streaming-backend/internal/store"
 )
 
 type Server struct {
-	mux    *http.ServeMux
-	store  *store.MemoryStore
-	broker *alarmBroker
+	mux     *http.ServeMux
+	store   *store.MemoryStore
+	broker  *alarmBroker
+	limiter *intake.Limiter
 }
 
 func New() *Server {
-	s := &Server{mux: http.NewServeMux(), store: store.NewMemoryStore(), broker: newAlarmBroker()}
+	s := &Server{
+		mux:     http.NewServeMux(),
+		store:   store.NewMemoryStore(),
+		broker:  newAlarmBroker(),
+		limiter: intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
+	}
 	s.routes()
 	go s.flushAlarmsLoop()
 	return s
