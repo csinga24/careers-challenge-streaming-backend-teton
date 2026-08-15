@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+
+	"teton-streaming-backend/internal/store"
 )
 
 type Server struct {
-	mux *http.ServeMux
+	mux   *http.ServeMux
+	store *store.MemoryStore
 }
 
 func New() *Server {
-	s := &Server{mux: http.NewServeMux()}
+	s := &Server{mux: http.NewServeMux(), store: store.NewMemoryStore()}
 	s.routes()
 	return s
 }

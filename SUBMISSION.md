@@ -18,6 +18,9 @@ required read endpoints are exposed as HTTP GET routes. HTTP was picked
 because it's the transport the event generator already speaks and needs no
 extra client/broker setup to test against.
 
+Accepted events currently live in an in-memory store (single map + mutex)
+with no persistence, that's a temporary setup for local testing.
+
 ## Ordering and late events
 
 (How you handle per-device ordering and out-of-order arrivals from offline devices.)
@@ -32,8 +35,11 @@ extra client/broker setup to test against.
 
 ## How to run it locally
 
+Requires Go 1.25+.
+
 ```bash
-# steps to bring up your service against event_generator/
+make run
+# (equivalent to: cd server && go run ./cmd/server)
 ```
 
 ## Reported metrics

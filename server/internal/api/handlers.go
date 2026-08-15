@@ -1,8 +1,29 @@
 package api
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"teton-streaming-backend/internal/model"
+)
 
 func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
+	var e model.Event
+	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: " + err.Error()})
+		return
+	}
+	if err := e.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := e.Acceptable(time.Now().UTC()); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.store.Append(e)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
