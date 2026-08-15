@@ -13,3 +13,5 @@ build/
 .env
 .env.local
 data/snapshots/
+server/bin/
+server/*.exe

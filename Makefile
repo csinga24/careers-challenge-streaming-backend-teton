@@ -3,11 +3,12 @@
 PYTHON ?= python3
 SERVICE_URL ?= http://localhost:8080
 
-.PHONY: help example smoke baseline burst offline adversarial
+.PHONY: help example run smoke baseline burst offline adversarial
 
 help:
 	@echo "Targets:"
 	@echo "  example        run the example stub service on :8080 (replace with yours)"
+	@echo "  run            run our Go service (server/) on :8080"
 	@echo "  smoke          30s baseline run against \$$SERVICE_URL + scorecard"
 	@echo "  baseline       60s baseline"
 	@echo "  burst          3min run with two 10x bursts"
@@ -20,6 +21,9 @@ DEVICES ?= 50
 
 example:
 	$(PYTHON) example_solution/service.py
+
+run:
+	cd server && go run ./cmd/server
 
 smoke:
 	$(PYTHON) eval/check.py smoke --target $(SERVICE_URL) --devices $(DEVICES)
