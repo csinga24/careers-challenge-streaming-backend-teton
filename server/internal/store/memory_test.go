@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -91,5 +92,24 @@ func TestMemoryStoreFallWarnEvents(t *testing.T) {
 	got := s.FallWarnEvents()
 	if len(got) != 2 {
 		t.Fatalf("expected 2 fall_warn events, got %d", len(got))
+	}
+}
+
+// TestMemoryStoreFallWarnEventsNotCappedAtPerDeviceLimit is a regression
+// test: s.falls is global across every device, not per-device.
+func TestMemoryStoreFallWarnEventsNotCappedAtPerDeviceLimit(t *testing.T) {
+	s := NewMemoryStore()
+	n := maxEventsPerDevice + 1000
+	for i := range n {
+		s.Append(model.Event{
+			DeviceID:   fmt.Sprintf("dev_%d", i%50), // spread across 50 devices
+			Type:       model.FallWarn,
+			Confidence: confidence(0.9),
+		})
+	}
+
+	got := s.FallWarnEvents()
+	if len(got) != n {
+		t.Fatalf("expected all %d fall_warn events retained (global cap is maxFallEvents, not maxEventsPerDevice), got %d", n, len(got))
 	}
 }

@@ -7,7 +7,11 @@ import (
 	"teton-streaming-backend/internal/model"
 )
 
+// maxEventsPerDevice bounds the per-device and per-room event buffers.
 const maxEventsPerDevice = 10000
+
+// maxFallEvents is global across every device
+const maxFallEvents = 1000000
 
 // MemoryStore keeps recent events per device, plus room/global indexes
 // for presence and fall_warn events that occupancy and alarms need
@@ -46,8 +50,8 @@ func (s *MemoryStore) Append(e model.Event) {
 		s.rooms[e.RoomID] = roomEvents
 	case model.FallWarn:
 		s.falls = append(s.falls, e)
-		if len(s.falls) > maxEventsPerDevice {
-			s.falls = s.falls[len(s.falls)-maxEventsPerDevice:]
+		if len(s.falls) > maxFallEvents {
+			s.falls = s.falls[len(s.falls)-maxFallEvents:]
 		}
 	}
 }
