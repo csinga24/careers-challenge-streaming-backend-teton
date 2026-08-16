@@ -3,7 +3,7 @@
 PYTHON ?= python3
 SERVICE_URL ?= http://localhost:8080
 
-.PHONY: help example run test lint db db-stop smoke baseline burst offline adversarial
+.PHONY: help example run test lint db db-stop compose-up compose-down smoke baseline burst offline adversarial
 
 help:
 	@echo "Targets:"
@@ -11,8 +11,10 @@ help:
 	@echo "  run            run our Go service (server/) on :8080"
 	@echo "  test           run the Go service's unit tests (server/)"
 	@echo "  lint           gofmt + go vet + staticcheck on the Go service (server/)"
-	@echo "  db             start Postgres in Docker for restart correctness (M4)"
+	@echo "  db             start Postgres in Docker for restart correctness"
 	@echo "  db-stop        stop and remove the Postgres container from 'db'"
+	@echo "  compose-up     build + start service and Postgres together"
+	@echo "  compose-down   stop and remove the compose stack, including its data volume"
 	@echo "  smoke          30s baseline run against \$$SERVICE_URL + scorecard"
 	@echo "  baseline       60s baseline"
 	@echo "  burst          3min run with two 10x bursts"
@@ -46,14 +48,21 @@ lint:
 	fi
 
 db:
-	docker run -d --name teton-postgres \
-		-e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=teton \
+	docker run -d --name streaming-postgres \
+		-e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=streaming \
 		-p 5432:5432 postgres:16-alpine
 	@echo "Postgres starting on :5432. Run the service against it with:"
-	@echo '  DATABASE_URL="postgres://postgres:postgres@localhost:5432/teton?sslmode=disable" make run'
+	@echo 'DATABASE_URL="postgres://postgres:postgres@localhost:5432/streaming?sslmode=disable" make run'
 
 db-stop:
-	docker rm -f teton-postgres
+	docker rm -f streaming-postgres
+
+compose-up:
+	docker compose up -d --build
+	@echo "Service on :8080, Postgres on :5432. Try: make smoke SERVICE_URL=http://localhost:8080"
+
+compose-down:
+	docker compose down -v
 
 smoke:
 	$(PYTHON) eval/check.py smoke --target $(SERVICE_URL) --devices $(DEVICES)

@@ -57,8 +57,21 @@ guessed at.
 
 ## How to run it locally
 
-Requires Go 1.25+. Restart correctness needs Postgres — Docker is
-optional otherwise (state just won't survive a restart without it).
+Two ways to run it, depending on what's on your machine.
+
+**With Docker:**
+Running the containerized service does not require a local toolchain dependency or Go installation.
+Restart correctness works out of the box.
+
+```bash
+docker compose up --build # service on :8080, Postgres on :5432
+
+# When done:
+docker compose down -v # stop + remove containers and the data volume
+```
+
+**Without Docker:** 
+Requires Go 1.25+. Restart correctness then needs a locally running Postgres.
 
 ```bash
 # Without Postgres — in-memory only, no restart correctness:
@@ -66,7 +79,7 @@ make run
 
 # With Postgres — durable, survives a hard kill:
 make db      # starts Postgres in Docker on :5432
-DATABASE_URL="postgres://postgres:postgres@localhost:5432/teton?sslmode=disable" make run
+DATABASE_URL="postgres://postgres:postgres@localhost:5432/streaming?sslmode=disable" make run
 
 # When done:
 make db-stop
