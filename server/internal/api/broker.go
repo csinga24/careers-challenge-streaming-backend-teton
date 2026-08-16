@@ -39,6 +39,8 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 			continue
 		}
 		b.seen[a.EventID] = true
+		alarmsEmittedTotal.Inc()
+		alarmsEmittedCount.Add(1)
 		for ch := range b.subscribers {
 			select {
 			case ch <- a:

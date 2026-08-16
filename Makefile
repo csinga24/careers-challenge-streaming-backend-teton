@@ -3,18 +3,20 @@
 PYTHON ?= python3
 SERVICE_URL ?= http://localhost:8080
 
-.PHONY: help example run test lint db db-stop compose-up compose-down smoke baseline burst offline adversarial
+.PHONY: help example run test lint db db-stop compose-up compose-down observability-up observability-down smoke baseline burst offline adversarial
 
 help:
 	@echo "Targets:"
-	@echo "  example        run the example stub service on :8080 (replace with yours)"
-	@echo "  run            run our Go service (server/) on :8080"
-	@echo "  test           run the Go service's unit tests (server/)"
-	@echo "  lint           gofmt + go vet + staticcheck on the Go service (server/)"
-	@echo "  db             start Postgres in Docker for restart correctness"
-	@echo "  db-stop        stop and remove the Postgres container from 'db'"
-	@echo "  compose-up     build + start service and Postgres together"
-	@echo "  compose-down   stop and remove the compose stack, including its data volume"
+	@echo "  example            run the example stub service on :8080 (replace with yours)"
+	@echo "  run                run our Go service (server/) on :8080"
+	@echo "  test               run the Go service's unit tests (server/)"
+	@echo "  lint               gofmt + go vet + staticcheck on the Go service (server/)"
+	@echo "  db                 start Postgres in Docker for restart correctness"
+	@echo "  db-stop            stop and remove the Postgres container from 'db'"
+	@echo "  compose-up         build + start service and Postgres together"
+	@echo "  compose-down       stop and remove the compose stack, including its data volume"
+	@echo "  observability-up   opt-in: also start Prometheus + Grafana, scraping the service"
+	@echo "  observability-down stop and remove the observability stack too"
 	@echo "  smoke          30s baseline run against \$$SERVICE_URL + scorecard"
 	@echo "  baseline       60s baseline"
 	@echo "  burst          3min run with two 10x bursts"
@@ -63,6 +65,14 @@ compose-up:
 
 compose-down:
 	docker compose down -v
+
+observability-up:
+	docker compose --profile observability up -d --build
+	@echo "Grafana on http://localhost:3000 (anonymous, no login), Prometheus on :9090."
+	@echo "Not part of the default 'compose-up' — see docker-compose.yml for why."
+
+observability-down:
+	docker compose --profile observability down -v
 
 smoke:
 	$(PYTHON) eval/check.py smoke --target $(SERVICE_URL) --devices $(DEVICES)

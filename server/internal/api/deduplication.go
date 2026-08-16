@@ -2,7 +2,7 @@ package api
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -27,11 +27,11 @@ func fallJitterWindowFromEnv() time.Duration {
 	}
 	ms, err := strconv.Atoi(raw)
 	if err != nil || ms < 0 {
-		log.Printf("invalid FALL_JITTER_WINDOW_MS %q, using default %v", raw, defaultFallJitterWindow)
+		slog.Warn("invalid FALL_JITTER_WINDOW_MS, using default", "value", raw, "default", defaultFallJitterWindow)
 		return defaultFallJitterWindow
 	}
 	window := time.Duration(ms) * time.Millisecond
-	log.Printf("fall_warn dedup jitter window: %v", window)
+	slog.Info("fall_warn dedup jitter window set", "window", window)
 	return window
 }
 

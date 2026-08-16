@@ -3,8 +3,11 @@ package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"teton-streaming-backend/internal/durablelog"
 	"teton-streaming-backend/internal/intake"
@@ -48,9 +51,35 @@ func newServer(st store.Store, log durablelog.Log) *Server {
 		broker:     newAlarmBroker(),
 		limiter:    intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
 	}
+	activeLimiter.Store(s.limiter) // backs the streaming_intake_queue_depth gauge (metrics.go)
 	s.routes()
 	go s.flushAlarmsLoop()
+	go s.statsLoop()
 	return s
+}
+
+// statsLoop periodically logs ingest rate, reject rate, queue depth, and
+// alarms emitted — a human-readable complement to /metrics, not a
+// replacement for it.
+const statsLogInterval = 30 * time.Second
+
+func (s *Server) statsLoop() {
+	ticker := time.NewTicker(statsLogInterval)
+	defer ticker.Stop()
+
+	var lastIngested, lastRejected int64
+	for range ticker.C {
+		ingested := ingestedCount.Load()
+		rejected := rejectedCount.Load()
+		high, normal := s.limiter.Depth()
+		slog.Info("stats",
+			"ingest_rate_per_sec", float64(ingested-lastIngested)/statsLogInterval.Seconds(),
+			"reject_rate_per_sec", float64(rejected-lastRejected)/statsLogInterval.Seconds(),
+			"queue_depth_high", high,
+			"queue_depth_normal", normal,
+			"alarms_emitted", alarmsEmittedCount.Load())
+		lastIngested, lastRejected = ingested, rejected
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,12 +92,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /rooms/{room_id}/occupancy", s.handleRoomOccupancy)
 	s.mux.HandleFunc("GET /alarms", s.handleAlarms)
 	s.mux.HandleFunc("GET /alarms/stream", s.handleAlarmsStream)
+	s.mux.Handle("GET /metrics", promhttp.Handler())
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("write response: %v", err)
+		slog.Warn("write response failed", "error", err) // usually a client disconnect, not actionable server-side
 	}
 }

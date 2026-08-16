@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -16,14 +16,21 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 
 	var e model.Event
 	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		ingestRejectedTotal.WithLabelValues("invalid_json").Inc()
+		rejectedCount.Add(1)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: " + err.Error()})
 		return
 	}
 	if err := e.Validate(); err != nil {
+		ingestRejectedTotal.WithLabelValues("validation_error").Inc()
+		rejectedCount.Add(1)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := e.Acceptable(time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if err := e.Acceptable(now); err != nil {
+		ingestRejectedTotal.WithLabelValues("unacceptable_ts").Inc()
+		rejectedCount.Add(1)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -31,11 +38,14 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 	release := s.limiter.Acquire(e.Type == model.FallWarn)
 	s.store.Append(e)
 	release()
+	ingestTotal.WithLabelValues(string(e.Type)).Inc()
+	ingestedCount.Add(1)
 
 	if s.durableLog != nil {
 		// Append buffers internally and flushes in batches.
 		if err := s.durableLog.Append(e); err != nil {
-			log.Printf("durable log append failed (event kept in memory, not yet durable): %v", err)
+			durableLogFailuresTotal.Inc()
+			slog.Error("durable log append failed", "error", err, "note", "event kept in memory, not yet durable")
 		}
 	}
 

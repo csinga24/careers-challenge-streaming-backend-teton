@@ -3,7 +3,7 @@
 // from starving on heartbeat/motion traffic.
 package intake
 
-import "log"
+import "log/slog"
 
 const (
 	DefaultHighCapacity   = 200  // fall_warn: rare, generous headroom
@@ -38,7 +38,7 @@ func (l *Limiter) Acquire(isHighPriority bool) (release func()) {
 	select {
 	case ch <- struct{}{}:
 	default:
-		log.Printf("intake: %s lane saturated (%d/%d), blocking", lane, len(ch), cap(ch))
+		slog.Warn("intake lane saturated, blocking", "lane", lane, "occupied", len(ch), "capacity", cap(ch))
 		ch <- struct{}{}
 	}
 	return func() { <-ch }

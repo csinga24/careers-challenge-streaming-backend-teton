@@ -3,17 +3,21 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"teton-streaming-backend/internal/api"
 	"teton-streaming-backend/internal/durablelog"
+	"teton-streaming-backend/internal/logx"
 	"teton-streaming-backend/internal/model"
 	"teton-streaming-backend/internal/store"
 )
 
 func main() {
+	logx.Init() // configures log/slog's default logger level from LOG_LEVEL
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -21,9 +25,9 @@ func main() {
 
 	srv := newServer()
 
-	log.Printf("listening on :%s", port)
+	slog.Info("listening", "port", port)
 	if err := http.ListenAndServe(":"+port, srv); err != nil {
-		log.Fatal(err)
+		log.Fatal(err) // process can't run at all; the level gate isn't relevant to a fatal exit
 	}
 }
 
@@ -35,7 +39,7 @@ func main() {
 func newServer() *api.Server {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Print("DATABASE_URL not set: running in-memory only, state will not survive a restart")
+		slog.Warn("DATABASE_URL not set: running in-memory only, state will not survive a restart")
 		return api.New()
 	}
 
@@ -57,7 +61,7 @@ func newServer() *api.Server {
 	}); err != nil {
 		log.Fatalf("replay durable log: %v", err)
 	}
-	log.Printf("replayed %d events from durable log in %v", count, time.Since(start))
+	slog.Info("replayed durable log", "events", count, "duration", time.Since(start))
 
 	return api.NewWithDurableLog(memStore, dlog)
 }

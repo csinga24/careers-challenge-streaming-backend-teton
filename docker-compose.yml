@@ -26,9 +26,39 @@ services:
       # Fall-warn dedup jitter window, in ms. Defaults to 1000 (1s).
       # Override here:
       # FALL_JITTER_WINDOW_MS: 1000
+      # Log verbosity: debug|info|warn|error. Defaults to info.
+      # Override here:
+      # LOG_LEVEL: info
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Opt-in only — not part of `docker compose up`. Bring up with:
+  #   docker compose --profile observability up
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - server
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observability"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
 
 volumes:
   streaming-pg-data:
