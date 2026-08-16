@@ -32,6 +32,12 @@ The real-time alarm feed uses SSE over WebSocket/long-poll since it's
 one-directional, runs over plain HTTP, and gets a standards-based resume
 mechanism for free.
 
+`FALL_JITTER_WINDOW_MS` is an env var, not a hardcoded const: the README gives 
+no exact number for fall-jitter spacing ("within a few seconds"), so this value 
+can't be measured against real-world behavior today, only guessed at — an env var 
+means that guess can be corrected with a config change and a container restart 
+once real feedback comes in, instead of a rebuild and resubmission.
+
 ## Ordering and late events
 
 Writes append in arrival order rather than sorting by `ts`, since a

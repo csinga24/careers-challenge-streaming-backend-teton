@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -9,9 +11,29 @@ import (
 	"teton-streaming-backend/internal/model"
 )
 
-// fallJitterWindow is how close together two fall_warn events from the
-// same device must be to even be considered jitter on one physical fall.
-const fallJitterWindow = 5 * time.Second
+// fallJitterWindow is how close together two fall_warn events from
+// the same device must be to even be considered jitter on one physical fall.
+// Set via FALL_JITTER_WINDOW_MS.
+var fallJitterWindow = fallJitterWindowFromEnv()
+
+const defaultFallJitterWindow = 1 * time.Second
+
+// fallJitterWindowFromEnv reads FALL_JITTER_WINDOW_MS, in milliseconds,
+// falling back to defaultFallJitterWindow if unset, empty, or invalid.
+func fallJitterWindowFromEnv() time.Duration {
+	raw := os.Getenv("FALL_JITTER_WINDOW_MS")
+	if raw == "" {
+		return defaultFallJitterWindow
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 {
+		log.Printf("invalid FALL_JITTER_WINDOW_MS %q, using default %v", raw, defaultFallJitterWindow)
+		return defaultFallJitterWindow
+	}
+	window := time.Duration(ms) * time.Millisecond
+	log.Printf("fall_warn dedup jitter window: %v", window)
+	return window
+}
 
 // deduplicateFalls collapses jittered fall_warn events into one Alarm per
 // physical fall. Clustering requires close ts AND matching confidence —

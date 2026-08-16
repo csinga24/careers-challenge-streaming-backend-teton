@@ -32,11 +32,14 @@ func TestDeduplicateFallsIgnoresNonFallEvents(t *testing.T) {
 func TestDeduplicateFallsJitterCollapsesToOne(t *testing.T) {
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 	// Jittered resends repeat the same confidence, matching how the
-	// generator produces them (byte-identical copies, only seq differs).
+	// generator produces them (byte-identical copies, only seq differs —
+	// in practice they land at an exact zero-second gap; these use small
+	// nonzero gaps to also cover fallJitterWindow's slack for genuine
+	// network/retry jitter).
 	events := []model.Event{
 		fallWarnAt("dev_1", now, 0.7),
-		fallWarnAt("dev_1", now.Add(1*time.Second), 0.7),
-		fallWarnAt("dev_1", now.Add(3*time.Second), 0.7),
+		fallWarnAt("dev_1", now.Add(300*time.Millisecond), 0.7),
+		fallWarnAt("dev_1", now.Add(700*time.Millisecond), 0.7),
 	}
 	got := deduplicateFalls(events)
 	if len(got) != 1 {
@@ -56,7 +59,7 @@ func TestDeduplicateFallsCloseInTimeButDifferentConfidenceStaysSeparate(t *testi
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 	events := []model.Event{
 		fallWarnAt("dev_1", now, 0.7),
-		fallWarnAt("dev_1", now.Add(2*time.Second), 0.4),
+		fallWarnAt("dev_1", now.Add(500*time.Millisecond), 0.4), // inside fallJitterWindow, different confidence
 	}
 	got := deduplicateFalls(events)
 	if len(got) != 2 {
@@ -83,8 +86,8 @@ func TestDeduplicateFallsChainedClusterBeyondWindow(t *testing.T) {
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 	events := []model.Event{
 		fallWarnAt("dev_1", now, 0.7),
-		fallWarnAt("dev_1", now.Add(4*time.Second), 0.7),
-		fallWarnAt("dev_1", now.Add(8*time.Second), 0.7),
+		fallWarnAt("dev_1", now.Add(600*time.Millisecond), 0.7),
+		fallWarnAt("dev_1", now.Add(1200*time.Millisecond), 0.7),
 	}
 	got := deduplicateFalls(events)
 	if len(got) != 1 {
@@ -178,6 +181,33 @@ func TestParseSince(t *testing.T) {
 			}
 			if !tc.wantErr && !got.Equal(tc.want) {
 				t.Errorf("parseSince(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFallJitterWindowFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string // "" means unset
+		want time.Duration
+	}{
+		{"unset uses default", "", defaultFallJitterWindow},
+		{"valid override", "2500", 2500 * time.Millisecond},
+		{"zero is a valid override, not a fallback", "0", 0},
+		{"negative falls back to default", "-1", defaultFallJitterWindow},
+		{"non-numeric falls back to default", "not-a-number", defaultFallJitterWindow},
+		{"empty falls back to default", "", defaultFallJitterWindow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.env == "" {
+				t.Setenv("FALL_JITTER_WINDOW_MS", "")
+			} else {
+				t.Setenv("FALL_JITTER_WINDOW_MS", tc.env)
+			}
+			if got := fallJitterWindowFromEnv(); got != tc.want {
+				t.Errorf("fallJitterWindowFromEnv() with FALL_JITTER_WINDOW_MS=%q = %v, want %v", tc.env, got, tc.want)
 			}
 		})
 	}
