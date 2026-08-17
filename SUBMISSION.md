@@ -21,6 +21,10 @@ extra client/broker setup to test against.
 Accepted events currently live in an in-memory store (single map + mutex)
 with no persistence, that's a temporary setup for local testing.
 
+The real-time alarm feed uses SSE over WebSocket/long-poll since it's
+one-directional, runs over plain HTTP, and gets a standards-based resume
+mechanism for free.
+
 ## Ordering and late events
 
 Writes append in arrival order rather than sorting by `ts`, since a
@@ -55,3 +59,4 @@ make run
 ## With another week
 
 (One or two paragraphs.)
+

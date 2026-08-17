@@ -3,13 +3,14 @@
 PYTHON ?= python3
 SERVICE_URL ?= http://localhost:8080
 
-.PHONY: help example run test smoke baseline burst offline adversarial
+.PHONY: help example run test lint smoke baseline burst offline adversarial
 
 help:
 	@echo "Targets:"
 	@echo "  example        run the example stub service on :8080 (replace with yours)"
 	@echo "  run            run our Go service (server/) on :8080"
 	@echo "  test           run the Go service's unit tests (server/)"
+	@echo "  lint           gofmt + go vet + staticcheck on the Go service (server/)"
 	@echo "  smoke          30s baseline run against \$$SERVICE_URL + scorecard"
 	@echo "  baseline       60s baseline"
 	@echo "  burst          3min run with two 10x bursts"
@@ -28,6 +29,19 @@ run:
 
 test:
 	cd server && go test ./... -race
+
+lint:
+	@echo "gofmt..."
+	@cd server && test -z "$$(gofmt -s -l .)" || { echo "not gofmt'd:"; gofmt -s -l .; exit 1; }
+	@echo "go vet..."
+	@cd server && go vet ./...
+	@echo "staticcheck..."
+	@if command -v staticcheck >/dev/null 2>&1; then \
+		(cd server && staticcheck ./...) && echo "lint: all checks passed"; \
+	else \
+		echo "  staticcheck not installed, skipping (go install honnef.co/go/tools/cmd/staticcheck@latest)"; \
+		echo "lint: gofmt+vet passed, staticcheck skipped (not installed)"; \
+	fi
 
 smoke:
 	$(PYTHON) eval/check.py smoke --target $(SERVICE_URL) --devices $(DEVICES)

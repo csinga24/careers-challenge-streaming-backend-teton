@@ -10,13 +10,15 @@ import (
 )
 
 type Server struct {
-	mux   *http.ServeMux
-	store *store.MemoryStore
+	mux    *http.ServeMux
+	store  *store.MemoryStore
+	broker *alarmBroker
 }
 
 func New() *Server {
-	s := &Server{mux: http.NewServeMux(), store: store.NewMemoryStore()}
+	s := &Server{mux: http.NewServeMux(), store: store.NewMemoryStore(), broker: newAlarmBroker()}
 	s.routes()
+	go s.flushAlarmsLoop()
 	return s
 }
 
@@ -29,6 +31,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /devices/{device_id}/health", s.handleDeviceHealth)
 	s.mux.HandleFunc("GET /rooms/{room_id}/occupancy", s.handleRoomOccupancy)
 	s.mux.HandleFunc("GET /alarms", s.handleAlarms)
+	s.mux.HandleFunc("GET /alarms/stream", s.handleAlarmsStream)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
