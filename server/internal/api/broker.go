@@ -56,7 +56,6 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 		da := deliveredAlarm{Alarm: a, Seq: b.nextSeq}
 		b.history = append(b.history, da)
 		alarmsEmittedTotal.Inc()
-		alarmsEmittedCount.Add(1)
 		if b.receipts != nil {
 			if latency, ok := b.receipts.takeLatency(a.EventID, now); ok {
 				alarmPublishLatencySeconds.Observe(latency.Seconds())

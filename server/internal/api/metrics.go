@@ -5,6 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	dto "github.com/prometheus/client_model/go"
 
 	"teton-streaming-backend/internal/intake"
 )
@@ -59,12 +60,20 @@ var (
 )
 
 // statsLoop's own running totals (server.go), kept alongside — not
-// instead of — the real Prometheus counters above. prometheus.Counter
-// and CounterVec don't expose a cheap "current total" read back out
-// (Gather() is the supported read path, meant for a scrape, not a
-// hot-path log line every 30s), so a plain atomic pairs with each Inc()
-// purely for that periodic summary.
-var ingestedCount, rejectedCount, alarmsEmittedCount atomic.Int64
+// instead of — the real Prometheus counters above, purely to compute
+// per-second rates between ticks.
+var ingestedCount, rejectedCount atomic.Int64
+
+// counterValue reads a Counter's current total back out. prometheus's
+// client only exposes this via Write(*dto.Metric) — the same mechanism
+// a scrape uses internally.
+func counterValue(c prometheus.Counter) float64 {
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
 
 // activeLimiter backs queueDepthCollector below. It's a package-level
 // pointer, not a per-Server field, because the collector itself is

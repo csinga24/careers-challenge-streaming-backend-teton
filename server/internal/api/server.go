@@ -82,7 +82,7 @@ func (s *Server) statsLoop() {
 			"reject_rate_per_sec", float64(rejected-lastRejected)/statsLogInterval.Seconds(),
 			"queue_depth_high", high,
 			"queue_depth_normal", normal,
-			"alarms_emitted", alarmsEmittedCount.Load())
+			"alarms_emitted", int64(counterValue(alarmsEmittedTotal)))
 		lastIngested, lastRejected = ingested, rejected
 	}
 }
