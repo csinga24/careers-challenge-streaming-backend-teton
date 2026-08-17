@@ -2,7 +2,7 @@
 
 **Your name:** Csenge Oszlanyi-Salacz
 **Email:** salaczka624@gmail.com
-**Link to your fork or solution:**
+**Link to your fork or solution:** https://github.com/csinga24/careers-challenge-streaming-backend-teton
 
 ---
 
