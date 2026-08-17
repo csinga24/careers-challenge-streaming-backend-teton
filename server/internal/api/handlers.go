@@ -34,12 +34,14 @@ func (s *Server) handleDeviceHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoomOccupancy(w http.ResponseWriter, r *http.Request) {
-	_ = r.PathValue("room_id")
-	_ = r.URL.Query().Get("window")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"in_room":      false,
-		"occupied_pct": 0.0,
-	})
+	roomID := r.PathValue("room_id")
+	window, err := parseWindow(r.URL.Query().Get("window"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	events := s.store.RoomPresenceEvents(roomID)
+	writeJSON(w, http.StatusOK, computeRoomOccupancy(events, window, time.Now().UTC()))
 }
 
 func (s *Server) handleAlarms(w http.ResponseWriter, r *http.Request) {

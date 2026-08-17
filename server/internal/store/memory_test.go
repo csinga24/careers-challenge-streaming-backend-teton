@@ -55,3 +55,26 @@ func TestMemoryStoreConcurrentAppend(t *testing.T) {
 		t.Fatalf("expected 100 events, got %d", len(s.Events("dev_concurrent")))
 	}
 }
+
+func inRoom(v bool) *bool { return &v }
+
+func TestMemoryStoreRoomPresenceEvents(t *testing.T) {
+	s := NewMemoryStore()
+	// Two different devices reporting into the same room.
+	s.Append(model.Event{DeviceID: "dev_1", RoomID: "room_14", Type: model.Presence, InRoom: inRoom(true)})
+	s.Append(model.Event{DeviceID: "dev_2", RoomID: "room_14", Type: model.Presence, InRoom: inRoom(false)})
+	// A different room, and a non-presence event, should not show up.
+	s.Append(model.Event{DeviceID: "dev_3", RoomID: "room_15", Type: model.Presence, InRoom: inRoom(true)})
+	s.Append(model.Event{DeviceID: "dev_1", RoomID: "room_14", Type: model.Heartbeat})
+
+	got := s.RoomPresenceEvents("room_14")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 presence events for room_14, got %d", len(got))
+	}
+	if len(s.RoomPresenceEvents("room_15")) != 1 {
+		t.Fatalf("expected 1 presence event for room_15")
+	}
+	if len(s.RoomPresenceEvents("room_unknown")) != 0 {
+		t.Fatalf("expected 0 presence events for unknown room")
+	}
+}

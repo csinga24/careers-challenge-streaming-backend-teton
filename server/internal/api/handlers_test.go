@@ -116,8 +116,32 @@ func TestHandleDeviceHealthReflectsPostedHeartbeat(t *testing.T) {
 	}
 }
 
-func TestHandleRoomOccupancy(t *testing.T) {
+func TestHandleRoomOccupancyUnknownRoom(t *testing.T) {
 	s := New()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/room_never_seen/occupancy?window=1m", nil)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid json body: %v", err)
+	}
+	if body["in_room"] != false {
+		t.Errorf("expected in_room false for unseen room, got %v", body["in_room"])
+	}
+	if body["occupied_pct"] != 0.0 {
+		t.Errorf("expected occupied_pct 0 for unseen room, got %v", body["occupied_pct"])
+	}
+}
+
+func TestHandleRoomOccupancyReflectsPostedPresence(t *testing.T) {
+	s := New()
+	now := time.Now().UTC()
+	postEvent(t, s, `{"device_id":"dev_0001","room_id":"room_14","type":"presence","ts":"`+now.Format(time.RFC3339Nano)+`","seq":1,"in_room":true}`)
+
 	req := httptest.NewRequest(http.MethodGet, "/rooms/room_14/occupancy?window=1m", nil)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
@@ -129,11 +153,23 @@ func TestHandleRoomOccupancy(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json body: %v", err)
 	}
-	if _, ok := body["in_room"]; !ok {
-		t.Errorf("missing in_room field")
+	if body["in_room"] != true {
+		t.Errorf("expected in_room true after posting presence, got %v", body["in_room"])
 	}
-	if _, ok := body["occupied_pct"]; !ok {
-		t.Errorf("missing occupied_pct field")
+	pct, _ := body["occupied_pct"].(float64)
+	if pct <= 0 {
+		t.Errorf("expected positive occupied_pct, got %v", pct)
+	}
+}
+
+func TestHandleRoomOccupancyInvalidWindow(t *testing.T) {
+	s := New()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/room_14/occupancy?window=bogus", nil)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 
