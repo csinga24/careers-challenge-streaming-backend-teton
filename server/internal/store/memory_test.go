@@ -113,3 +113,65 @@ func TestMemoryStoreFallWarnEventsNotCappedAtPerDeviceLimit(t *testing.T) {
 		t.Fatalf("expected all %d fall_warn events retained (global cap is maxFallEvents, not maxEventsPerDevice), got %d", n, len(got))
 	}
 }
+
+func TestMemoryStoreFallWarnEventsFromIncremental(t *testing.T) {
+	s := NewMemoryStore()
+	s.Append(model.Event{DeviceID: "dev_1", Type: model.FallWarn, Confidence: confidence(0.9)})
+	s.Append(model.Event{DeviceID: "dev_2", Type: model.FallWarn, Confidence: confidence(0.8)})
+
+	first, total := s.FallWarnEventsFrom(0)
+	if len(first) != 2 || total != 2 {
+		t.Fatalf("expected 2 events, total 2, got %d events, total %d", len(first), total)
+	}
+
+	// Nothing new since offset=total: empty, same total.
+	none, total2 := s.FallWarnEventsFrom(total)
+	if len(none) != 0 || total2 != 2 {
+		t.Fatalf("expected 0 new events, total unchanged at 2, got %d events, total %d", len(none), total2)
+	}
+
+	s.Append(model.Event{DeviceID: "dev_3", Type: model.FallWarn, Confidence: confidence(0.7)})
+	more, total3 := s.FallWarnEventsFrom(total)
+	if len(more) != 1 || total3 != 3 {
+		t.Fatalf("expected 1 new event, total 3, got %d events, total %d", len(more), total3)
+	}
+	if more[0].DeviceID != "dev_3" {
+		t.Errorf("expected the new event to be dev_3's, got %+v", more[0])
+	}
+}
+
+// TestMemoryStoreFallWarnEventsFromSurvivesEviction is a regression test
+// for the one subtle piece of FallWarnEventsFrom's logic: offset is
+// tracked against the store's all-time fall_warn count
+// (fallsEvicted + len(falls)), not the live slice index, specifically
+// so a caller's offset stays valid across an eviction instead of
+// silently pointing at the wrong element once the front of falls has
+// been dropped.
+func TestMemoryStoreFallWarnEventsFromSurvivesEviction(t *testing.T) {
+	s := NewMemoryStore()
+	for i := range maxFallEvents + 10 {
+		s.Append(model.Event{
+			DeviceID:   fmt.Sprintf("dev_%d", i%50),
+			Type:       model.FallWarn,
+			Confidence: confidence(0.9),
+		})
+	}
+
+	// An offset from before the eviction started: FallWarnEventsFrom
+	// can no longer honor it exactly, so it must fall back to returning
+	// everything currently buffered rather than silently misaligning.
+	events, total := s.FallWarnEventsFrom(5)
+	if len(events) != maxFallEvents {
+		t.Fatalf("expected a stale pre-eviction offset to fall back to the full buffered set (%d events), got %d", maxFallEvents, len(events))
+	}
+	if total != maxFallEvents+10 {
+		t.Fatalf("expected total to reflect every event ever accepted (%d), got %d", maxFallEvents+10, total)
+	}
+
+	// A caller that's already caught up (offset == total) still sees
+	// nothing new, same as the no-eviction case.
+	none, total2 := s.FallWarnEventsFrom(total)
+	if len(none) != 0 || total2 != total {
+		t.Fatalf("expected 0 new events for a caught-up offset, got %d events, total %d", len(none), total2)
+	}
+}

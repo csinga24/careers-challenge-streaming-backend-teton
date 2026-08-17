@@ -14,4 +14,12 @@ type Store interface {
 	// FallWarnEvents returns every fall_warn event accepted, across all
 	// devices.
 	FallWarnEvents() []model.Event
+	// FallWarnEventsFrom returns only the fall_warn events accepted since
+	// offset, plus the current total (pass that back as offset on the
+	// next call), so a repeat caller doesn't have to re-copy the whole,
+	// ever-growing fall_warn history just to see what's new since last
+	// time. offset 0 (or any offset the implementation can no longer
+	// honor, e.g. after evicting old events) returns everything
+	// currently available.
+	FallWarnEventsFrom(offset int) (events []model.Event, total int)
 }
