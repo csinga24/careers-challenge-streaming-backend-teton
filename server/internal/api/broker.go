@@ -13,6 +13,9 @@ const subscriberBufferSize = 64
 // alarmFlushInterval bounds how stale the live feed can be.
 const alarmFlushInterval = 200 * time.Millisecond
 
+// seenMaxAge bounds how long alarmBroker.seen holds an entry.
+var seenMaxAge = fallJitterWindow + time.Hour
+
 // deliveredAlarm is what actually goes out over the broker: the alarm
 // plus the monotonic publish-order sequence number it was assigned.
 type deliveredAlarm struct {
@@ -26,15 +29,15 @@ type deliveredAlarm struct {
 type alarmBroker struct {
 	mu          sync.Mutex
 	nextSeq     int64
-	seen        map[string]bool
-	history     []deliveredAlarm // ordered by Seq, oldest first
+	seen        map[string]time.Time // event_id -> when first seen, for sweep
+	history     []deliveredAlarm     // ordered by Seq, oldest first
 	subscribers map[chan deliveredAlarm]struct{}
 	receipts    *fallReceiptTracker // ingest-time lookups for alarmPublishLatencySeconds; nil-safe
 }
 
 func newAlarmBroker(receipts *fallReceiptTracker) *alarmBroker {
 	return &alarmBroker{
-		seen:        make(map[string]bool),
+		seen:        make(map[string]time.Time),
 		subscribers: make(map[chan deliveredAlarm]struct{}),
 		receipts:    receipts,
 	}
@@ -48,10 +51,10 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 
 	now := time.Now()
 	for _, a := range alarms {
-		if b.seen[a.EventID] {
+		if _, ok := b.seen[a.EventID]; ok {
 			continue
 		}
-		b.seen[a.EventID] = true
+		b.seen[a.EventID] = now
 		b.nextSeq++
 		da := deliveredAlarm{Alarm: a, Seq: b.nextSeq}
 		b.history = append(b.history, da)
@@ -67,6 +70,19 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 			default:
 				// Slow subscriber; drop rather than block ingestion.
 			}
+		}
+	}
+}
+
+// sweep drops any seen entry older than maxAge, mirroring
+// fallReceiptTracker.sweep (latency.go). Bounds seen's otherwise
+// unlimited growth.
+func (b *alarmBroker) sweep(maxAge time.Duration, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, at := range b.seen {
+		if now.Sub(at) > maxAge {
+			delete(b.seen, id)
 		}
 	}
 }
@@ -110,6 +126,7 @@ func (s *Server) flushAlarmsLoop() {
 	for range ticker.C {
 		s.flushAlarmsOnce()
 		s.fallReceipts.sweep(fallReceiptMaxAge, time.Now())
+		s.broker.sweep(seenMaxAge, time.Now())
 	}
 }
 
