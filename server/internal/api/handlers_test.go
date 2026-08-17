@@ -70,8 +70,32 @@ func TestHandleEventIntakeStoresAcceptedEvent(t *testing.T) {
 	}
 }
 
-func TestHandleDeviceHealth(t *testing.T) {
+func TestHandleDeviceHealthUnknownDevice(t *testing.T) {
 	s := New()
+	req := httptest.NewRequest(http.MethodGet, "/devices/dev_never_seen/health", nil)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid json body: %v", err)
+	}
+	if body["last_heartbeat_ts"] != nil {
+		t.Errorf("expected last_heartbeat_ts null for unseen device, got %v", body["last_heartbeat_ts"])
+	}
+	if body["availability_5m"] != 0.0 {
+		t.Errorf("expected availability_5m 0 for unseen device, got %v", body["availability_5m"])
+	}
+}
+
+func TestHandleDeviceHealthReflectsPostedHeartbeat(t *testing.T) {
+	s := New()
+	now := time.Now().UTC()
+	postEvent(t, s, `{"device_id":"dev_0001","room_id":"room_14","type":"heartbeat","ts":"`+now.Format(time.RFC3339Nano)+`","seq":1}`)
+
 	req := httptest.NewRequest(http.MethodGet, "/devices/dev_0001/health", nil)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
@@ -83,11 +107,12 @@ func TestHandleDeviceHealth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json body: %v", err)
 	}
-	if _, ok := body["last_heartbeat_ts"]; !ok {
-		t.Errorf("missing last_heartbeat_ts field")
+	if body["last_heartbeat_ts"] == nil {
+		t.Fatalf("expected non-null last_heartbeat_ts")
 	}
-	if _, ok := body["availability_5m"]; !ok {
-		t.Errorf("missing availability_5m field")
+	avail, _ := body["availability_5m"].(float64)
+	if avail <= 0 {
+		t.Errorf("expected positive availability_5m after posting a heartbeat, got %v", avail)
 	}
 }
 

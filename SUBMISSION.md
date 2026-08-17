@@ -23,7 +23,10 @@ with no persistence, that's a temporary setup for local testing.
 
 ## Ordering and late events
 
-(How you handle per-device ordering and out-of-order arrivals from offline devices.)
+Writes append in arrival order rather than sorting by `ts`, since a
+sorted insert's occasional shift would hold the store's single lock and
+stall every device's ingestion, not just the one being written; ordering
+is instead resolved per endpoint at read time.
 
 ## Backpressure
 

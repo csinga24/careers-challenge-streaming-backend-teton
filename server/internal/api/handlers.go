@@ -28,11 +28,9 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeviceHealth(w http.ResponseWriter, r *http.Request) {
-	_ = r.PathValue("device_id")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"last_heartbeat_ts": nil,
-		"availability_5m":   0.0,
-	})
+	deviceID := r.PathValue("device_id")
+	events := s.store.Events(deviceID)
+	writeJSON(w, http.StatusOK, computeDeviceHealth(events, time.Now().UTC()))
 }
 
 func (s *Server) handleRoomOccupancy(w http.ResponseWriter, r *http.Request) {
