@@ -73,6 +73,49 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Alarm feed latency (p50 / p95)",
+      "description": "Real, measured wall-clock time from a fall_warn event's ingest to its alarm's first publish on the SSE feed (streaming_alarm_publish_latency_seconds) — what the README's 1s p95 bar (15 points) is actually about, not an assumption based on the flush tick's fixed period.",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(streaming_alarm_publish_latency_seconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(streaming_alarm_publish_latency_seconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p95",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingest latency (p50 / p95)",
+      "description": "POST /events handler duration — decode, validate, intake limiter wait, store append (streaming_ingest_duration_seconds). Rising under burst means the intake limiter is delaying producers as designed; a spike alongside rejected events usually points elsewhere.",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(streaming_ingest_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(streaming_ingest_duration_seconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p95",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     }
   ]
 }
