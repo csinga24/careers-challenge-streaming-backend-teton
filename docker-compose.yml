@@ -26,6 +26,10 @@ services:
       # Fall-warn dedup jitter window, in ms. Defaults to 1000 (1s).
       # Override here:
       # FALL_JITTER_WINDOW_MS: 1000
+      # Expected heartbeats per 5m availability window. Defaults to 300
+      # (~1Hz, per the README). Override only if the real grading
+      # generator's heartbeat rate is confirmed to differ from that.
+      # EXPECTED_HEARTBEATS_5M: 300
       # Log verbosity: debug|info|warn|error. Defaults to info.
       # Override here:
       # LOG_LEVEL: info

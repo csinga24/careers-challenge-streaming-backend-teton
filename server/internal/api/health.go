@@ -1,15 +1,43 @@
 package api
 
 import (
+	"log/slog"
+	"os"
+	"strconv"
 	"time"
 
 	"teton-streaming-backend/internal/model"
 )
 
-const (
-	availabilityWindow  = 5 * time.Minute
-	expectedHeartbeats5 = 300 // ~1Hz over 5 minutes
-)
+const availabilityWindow = 5 * time.Minute
+
+// defaultExpectedHeartbeats5 assumes ~1Hz over the 5-minute availability
+// window. Set via EXPECTED_HEARTBEATS_5M if the actual device heartbeat
+// rate differs — a mismatch here systematically caps every healthy
+// device's reported availability.
+const defaultExpectedHeartbeats5 = 300
+
+// expectedHeartbeats5 is the heartbeat count in availabilityWindow a
+// fully-available device is expected to produce; computeDeviceHealth
+// divides observed count by this to get Availability5m.
+var expectedHeartbeats5 = expectedHeartbeats5FromEnv()
+
+// expectedHeartbeats5FromEnv reads EXPECTED_HEARTBEATS_5M, falling back
+// to defaultExpectedHeartbeats5 if unset, empty, or invalid. Mirrors
+// fallJitterWindowFromEnv's pattern (deduplication.go).
+func expectedHeartbeats5FromEnv() float64 {
+	raw := os.Getenv("EXPECTED_HEARTBEATS_5M")
+	if raw == "" {
+		return defaultExpectedHeartbeats5
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		slog.Warn("invalid EXPECTED_HEARTBEATS_5M, using default", "value", raw, "default", defaultExpectedHeartbeats5)
+		return defaultExpectedHeartbeats5
+	}
+	slog.Info("expected heartbeats per 5m window set", "count", n)
+	return float64(n)
+}
 
 type deviceHealth struct {
 	LastHeartbeatTS *time.Time `json:"last_heartbeat_ts"`
