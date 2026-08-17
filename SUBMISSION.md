@@ -1,65 +1,30 @@
 # Submission, Real-time Streaming Backend
 
-**Your name:**
-**Email:**
+**Your name:** Csenge Oszlanyi-Salacz
+**Email:** salaczka624@gmail.com
 **Link to your fork or solution:**
 
 ---
 
 ## Stack and storage
 
-The service is written in Go, chosen for its concurrency primitives
-(goroutines/channels), which fit an event-driven ingest workload, for
-compiling to a single static binary that's simple to run and containerize,
-and because it's a language I already have experience with.
-
-Events are received over plain HTTP POST to `/events`, and the three
-required read endpoints are exposed as HTTP GET routes. HTTP was picked
-because it's the transport the event generator already speaks and needs no
-extra client/broker setup to test against.
-
-For the durable write-ahead log behind it, Postgres is the pick. A
-bake-off benchmarked it against BoltDB, SQLite, and a hand-rolled flat
-file; SQLite came close on raw write throughput, but that case rested on
-avoiding Docker as an extra dependency — since Docker is already being
-added for deployment regardless of storage choice, that advantage
-disappears. With that constraint gone, Postgres wins outright: highest
-write throughput, mature operational tooling, and the natural fit if
-this ever needs multiple app instances sharing one durable store, which
-SQLite doesn't support gracefully.
-
-The real-time alarm feed uses SSE over WebSocket/long-poll since it's
-one-directional, runs over plain HTTP, and gets a standards-based resume
-mechanism for free.
-
-`FALL_JITTER_WINDOW_MS` is an env var, not a hardcoded const: the README gives 
-no exact number for fall-jitter spacing ("within a few seconds"), so this value 
-can't be measured against real-world behavior today, only guessed at — an env var 
-means that guess can be corrected with a config change and a container restart 
-once real feedback comes in, instead of a rebuild and resubmission.
+The service is written in Go: goroutines and channels fit the concurrent, per-device ingest workload directly, and a single static binary keeps the Docker image trivial and no toolchain dependency for anyone running it. Events arrive via POST /events; reads are HTTP GET.
+The real-time alarm feed uses SSE, since it's one-directional, runs over plain HTTP, and gets a resume mechanism (Last-Event-ID) built in.
+Postgres is the durable append-only event log. I benchmarked it against BoltDB, SQLite, and a flat file. SQLite performed similarly, but Docker was already required for deployment, so Postgres won on tooling, throughput, and a clearer path to multiple service instances.
 
 ## Ordering and late events
 
-Writes append in arrival order rather than sorting by `ts`, since a
-sorted insert's occasional shift would hold the store's single lock and
-stall every device's ingestion, not just the one being written; ordering
-is instead resolved per endpoint at read time.
+Events are appended in arrival order to avoid a sorted insert holding a global store lock during bursts; ordering is resolved on read instead: device health picks the latest heartbeat by timestamp, room occupancy merges and sorts presence events across devices, and fall-warning deduplication sorts each device's events before clustering. Events up to one hour in the past are accepted, so offline devices can replay buffered data and correct historical aggregations; timestamps more than one hour in the future are rejected.
 
 ## Backpressure
 
-Backpressure under burst is a bounded, priority-aware concurrency limiter
-rather than a queue+worker pool, load shedding, or a broker. It keeps
-writes synchronous (preserving read-your-writes) while still delaying
-producers instead of dropping events, which a queue or shedding would
-either complicate or violate outright.
+Backpressure uses bounded, priority-aware concurrency limiters: fall_warn events get their own lane, other events share one. When a lane is full, request handlers block rather than dropping events or returning misleading success responses. Writes stay synchronous, preserving read-your-writes.
 
 ## Restart correctness
 
-Every accepted event is written synchronously to the in-memory store
-(what serves reads) and asynchronously, batched, to a durable Postgres
-log. On boot, that log is replayed back into a fresh in-memory store
-before the server starts accepting requests, so state is rebuilt, not
-guessed at.
+Accepted events go to the in-memory store, then flush in batches to an append-only Postgres log (monotonic sequence + payload). On startup, the service replays the log into a fresh in-memory store before accepting requests, rebuilding device health, room occupancy, fall history, and alarms.
+Tested with 5,268 events accepted, kill -9, restart and then all 5,268 were recovered: an observed result, not a guarantee. The 10ms flush interval shrinks, but doesn't eliminate, that loss window.
+The SSE feed resumes by the broker's publish sequence, not event ts, so a late-discovered alarm isn't silently dropped on reconnect. That sequence resets in memory on restart, but the server now deterministically replays it before accepting requests, so a reconnecting client's cursor resolves correctly except when the flush window (above) actually lost the event.
 
 ## How to run it locally
 
@@ -70,20 +35,30 @@ Running the containerized service does not require a local toolchain dependency 
 Restart correctness works out of the box.
 
 ```bash
-docker compose up --build # service on :8080, Postgres on :5432
+make compose-up   # service on :8080, Postgres on :5432
 
 # When done:
-docker compose down -v # stop + remove containers and the data volume
+make compose-down # stop + remove containers and the data volume
 ```
 
-**Without Docker:** 
+**Optional: Prometheus + Grafana for visualization of some of the metrics.**
+
+```bash
+make observability-up
+# service on :8080, Prometheus on :9090, Grafana on :3000 (no login)
+
+# When done:
+make observability-down
+```
+
+**Without Docker:**
 Requires Go 1.25+. Restart correctness then needs a locally running Postgres.
 
 ```bash
-# Without Postgres — in-memory only, no restart correctness:
+# Without Postgres: in-memory only, no restart correctness:
 make run
 
-# With Postgres — durable, survives a hard kill:
+# With Postgres: durable, survives a hard kill:
 make db      # starts Postgres in Docker on :5432
 DATABASE_URL="postgres://postgres:postgres@localhost:5432/streaming?sslmode=disable" make run
 
@@ -93,12 +68,11 @@ make db-stop
 
 ## Reported metrics
 
-- Sustained ingest rate:
-- Alarm feed latency p50 / p95:
-- Behavior under hard kill + restart:
-- Aggregation correctness on replayed events:
+- Sustained ingest rate: Ten fresh 500-device burst runs averaged 1,236.2 events/sec with a range of 1,154.3–1,268.6 and zero failed events.
+- Alarm feed latency p50 / p95: At 500 devices, p50 was at most 0.1s and p95 at most 0.25s. Mean latency was 103.8ms, with 2,036/2,041 alarms matched.
+- Behavior under hard kill + restart: 5,268/5,268 events replayed in the largest test run. This is an observed result, not a guaranteed bound (see "Restart correctness").
+- Aggregation correctness on replayed events: Offline replay matched 739/739 alarms. The adversarial scenario matched 2,541/2,545, or 99.84%. Ten burst runs averaged 99.86% deduplication accuracy.
 
 ## With another week
 
-(One or two paragraphs.)
-
+I'd make ingestion acknowledgment wait on confirmed durable persistence, then measure the latency/throughput cost. I'd also replace heuristic fall deduplication with a stable device-generated ID per physical fall, closing the collision gap outright.
