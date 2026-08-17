@@ -9,12 +9,14 @@ import (
 
 const maxEventsPerDevice = 10000
 
-// MemoryStore keeps recent events per device, plus a room index for
-// presence events that room occupancy needs merged across devices.
+// MemoryStore keeps recent events per device, plus room/global indexes
+// for presence and fall_warn events that occupancy and alarms need
+// merged across devices.
 type MemoryStore struct {
 	mu      sync.Mutex
 	devices map[string][]model.Event
 	rooms   map[string][]model.Event
+	falls   []model.Event
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -35,12 +37,18 @@ func (s *MemoryStore) Append(e model.Event) {
 	}
 	s.devices[e.DeviceID] = events
 
-	if e.Type == model.Presence {
+	switch e.Type {
+	case model.Presence:
 		roomEvents := append(s.rooms[e.RoomID], e)
 		if len(roomEvents) > maxEventsPerDevice {
 			roomEvents = roomEvents[len(roomEvents)-maxEventsPerDevice:]
 		}
 		s.rooms[e.RoomID] = roomEvents
+	case model.FallWarn:
+		s.falls = append(s.falls, e)
+		if len(s.falls) > maxEventsPerDevice {
+			s.falls = s.falls[len(s.falls)-maxEventsPerDevice:]
+		}
 	}
 }
 
@@ -64,5 +72,16 @@ func (s *MemoryStore) RoomPresenceEvents(roomID string) []model.Event {
 	events := s.rooms[roomID]
 	out := make([]model.Event, len(events))
 	copy(out, events)
+	return out
+}
+
+// FallWarnEvents returns a copy of every fall_warn event accepted, across
+// all devices.
+func (s *MemoryStore) FallWarnEvents() []model.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]model.Event, len(s.falls))
+	copy(out, s.falls)
 	return out
 }

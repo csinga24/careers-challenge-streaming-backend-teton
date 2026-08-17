@@ -78,3 +78,18 @@ func TestMemoryStoreRoomPresenceEvents(t *testing.T) {
 		t.Fatalf("expected 0 presence events for unknown room")
 	}
 }
+
+func confidence(v float64) *float64 { return &v }
+
+func TestMemoryStoreFallWarnEvents(t *testing.T) {
+	s := NewMemoryStore()
+	s.Append(model.Event{DeviceID: "dev_1", Type: model.FallWarn, Confidence: confidence(0.9)})
+	s.Append(model.Event{DeviceID: "dev_2", Type: model.FallWarn, Confidence: confidence(0.8)})
+	// Non-fall events should not show up in the global fall index.
+	s.Append(model.Event{DeviceID: "dev_1", Type: model.Heartbeat})
+
+	got := s.FallWarnEvents()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 fall_warn events, got %d", len(got))
+	}
+}
