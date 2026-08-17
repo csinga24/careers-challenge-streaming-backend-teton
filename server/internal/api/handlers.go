@@ -45,8 +45,18 @@ func (s *Server) handleRoomOccupancy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAlarms(w http.ResponseWriter, r *http.Request) {
-	_ = r.URL.Query().Get("since")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"alarms": []any{},
-	})
+	since, err := parseSince(r.URL.Query().Get("since"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	alarms := deduplicateFalls(s.store.FallWarnEvents())
+	filtered := make([]model.Alarm, 0, len(alarms))
+	for _, a := range alarms {
+		if a.TS.After(since) {
+			filtered = append(filtered, a)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"alarms": filtered})
 }
