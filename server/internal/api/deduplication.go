@@ -31,7 +31,7 @@ func fallJitterWindowFromEnv() time.Duration {
 		return defaultFallJitterWindow
 	}
 	window := time.Duration(ms) * time.Millisecond
-	slog.Info("fall_warn dedup jitter window set", "window", window)
+	slog.Info("fall_warn deduplication jitter window set", "window", window)
 	return window
 }
 
@@ -49,22 +49,34 @@ func deduplicateFalls(events []model.Event) []model.Alarm {
 
 	var alarms []model.Alarm
 	for deviceID, deviceEvents := range byDevice {
-		sort.Slice(deviceEvents, func(i, j int) bool { return deviceEvents[i].TS.Before(deviceEvents[j].TS) })
-
-		clusterStart := deviceEvents[0]
-		lastTS := clusterStart.TS
-		for _, e := range deviceEvents[1:] {
-			sameCluster := e.TS.Sub(lastTS) <= fallJitterWindow && *e.Confidence == *clusterStart.Confidence
-			if !sameCluster {
-				alarms = append(alarms, newAlarm(deviceID, clusterStart))
-				clusterStart = e
-			}
-			lastTS = e.TS
-		}
-		alarms = append(alarms, newAlarm(deviceID, clusterStart))
+		alarms = append(alarms, clusterDeviceFalls(deviceID, deviceEvents)...)
 	}
 
 	sort.Slice(alarms, func(i, j int) bool { return alarms[i].TS.Before(alarms[j].TS) })
+	return alarms
+}
+
+// clusterDeviceFalls collapses one device's fall_warn events (in any
+// order) into one Alarm per physical fall, per the rule described on
+// deduplicateFalls. Sorts deviceEvents in place.
+func clusterDeviceFalls(deviceID string, deviceEvents []model.Event) []model.Alarm {
+	if len(deviceEvents) == 0 {
+		return nil
+	}
+	sort.Slice(deviceEvents, func(i, j int) bool { return deviceEvents[i].TS.Before(deviceEvents[j].TS) })
+
+	var alarms []model.Alarm
+	clusterStart := deviceEvents[0]
+	lastTS := clusterStart.TS
+	for _, e := range deviceEvents[1:] {
+		sameCluster := e.TS.Sub(lastTS) <= fallJitterWindow && *e.Confidence == *clusterStart.Confidence
+		if !sameCluster {
+			alarms = append(alarms, newAlarm(deviceID, clusterStart))
+			clusterStart = e
+		}
+		lastTS = e.TS
+	}
+	alarms = append(alarms, newAlarm(deviceID, clusterStart))
 	return alarms
 }
 
@@ -83,9 +95,15 @@ func parseSince(s string) (time.Time, error) {
 	return time.Unix(sec, int64(frac*float64(time.Second))).UTC(), nil
 }
 
+// alarmEventID is the stable id an event would have if it turned out to
+// be its cluster's earliest — i.e. the id newAlarm assigns.
+func alarmEventID(deviceID string, ts time.Time) string {
+	return fmt.Sprintf("%s-%d", deviceID, ts.UnixNano())
+}
+
 func newAlarm(deviceID string, e model.Event) model.Alarm {
 	return model.Alarm{
-		EventID:    fmt.Sprintf("%s-%d", deviceID, e.TS.UnixNano()),
+		EventID:    alarmEventID(deviceID, e.TS),
 		DeviceID:   deviceID,
 		RoomID:     e.RoomID,
 		TS:         e.TS,
