@@ -74,19 +74,7 @@ func writeSSEAlarm(w http.ResponseWriter, flusher http.Flusher, a deliveredAlarm
 }
 
 // parseCursor reads a Last-Event-ID header back as the broker sequence
-// it was minted from (see writeSSEAlarm). ok is false for an empty or
-// malformed id, in which case the caller skips backlog replay entirely
-// and starts the subscriber live-only — the same fail-open behavior as
-// before, just on a parse failure instead of a missing header.
-//
-// Residual, honestly stated: the sequence is in-memory and resets to 0
-// on every process restart. A cursor held by a client across a hard
-// restart is being replayed against a different counter than the one
-// that minted it — it may resolve to the wrong point, or to nothing at
-// all if the new process hasn't published that many alarms yet. Closing
-// that gap needs the sequence (or the alarm history itself) to survive
-// a restart the way the event log already does; not done here — see
-// SUBMISSION.md.
+// it was minted from (see writeSSEAlarm).
 func parseCursor(id string) (seq int64, ok bool) {
 	if id == "" {
 		return 0, false

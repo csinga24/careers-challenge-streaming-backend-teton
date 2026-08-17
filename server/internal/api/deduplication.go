@@ -52,7 +52,10 @@ func deduplicateFalls(events []model.Event) []model.Alarm {
 		alarms = append(alarms, clusterDeviceFalls(deviceID, deviceEvents)...)
 	}
 
-	sort.Slice(alarms, func(i, j int) bool { return alarms[i].TS.Before(alarms[j].TS) })
+	// Stable: boot-time recompute must order tied timestamps identically
+	// every run, or a reconnecting client's cursor resolves against a
+	// different relative ordering than the one it was minted from.
+	sort.SliceStable(alarms, func(i, j int) bool { return alarms[i].TS.Before(alarms[j].TS) })
 	return alarms
 }
 
@@ -63,7 +66,7 @@ func clusterDeviceFalls(deviceID string, deviceEvents []model.Event) []model.Ala
 	if len(deviceEvents) == 0 {
 		return nil
 	}
-	sort.Slice(deviceEvents, func(i, j int) bool { return deviceEvents[i].TS.Before(deviceEvents[j].TS) })
+	sort.SliceStable(deviceEvents, func(i, j int) bool { return deviceEvents[i].TS.Before(deviceEvents[j].TS) })
 
 	var alarms []model.Alarm
 	clusterStart := deviceEvents[0]

@@ -55,7 +55,9 @@ func (e *alarmDeduplicationEngine) snapshot(st store.Store) []model.Alarm {
 	for _, alarms := range e.alarms {
 		merged = append(merged, alarms...)
 	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].TS.Before(merged[j].TS) })
+	// Stable for the same reason as deduplicateFalls: restart-time
+	// recompute must break timestamp ties identically every run.
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].TS.Before(merged[j].TS) })
 	e.merged = merged
 	return e.merged
 }

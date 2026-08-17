@@ -58,6 +58,16 @@ func newServer(st store.Store, log durablelog.Log) *Server {
 	}
 	activeLimiter.Store(s.limiter) // backs the streaming_intake_queue_depth gauge (metrics.go)
 	s.routes()
+
+	// Run once, synchronously, before serving: st may already hold a
+	// full replayed history (NewWithDurableLog), and alarm recomputation
+	// is deterministic, so this closes the boot window where a
+	// reconnecting SSE client's cursor would otherwise resolve against
+	// an empty broker (see stream.go's parseCursor comment) — the same
+	// "correct from the first request" guarantee this func's doc comment
+	// already promises for store reads, extended to the alarm feed.
+	s.flushAlarmsOnce()
+
 	go s.flushAlarmsLoop()
 	go s.statsLoop()
 	return s
