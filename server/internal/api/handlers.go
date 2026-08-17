@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,6 +11,9 @@ import (
 const maxEventBodyBytes = 1 << 16 // 64KiB; real events are ~150-250B
 
 func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() { ingestDurationSeconds.Observe(time.Since(start).Seconds()) }()
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxEventBodyBytes)
 
 	var e model.Event
@@ -41,12 +43,12 @@ func (s *Server) handleEventIntake(w http.ResponseWriter, r *http.Request) {
 	ingestTotal.WithLabelValues(string(e.Type)).Inc()
 	ingestedCount.Add(1)
 
+	if e.Type == model.FallWarn {
+		s.fallReceipts.record(alarmEventID(e.DeviceID, e.TS), start)
+	}
+
 	if s.durableLog != nil {
-		// Append buffers internally and flushes in batches.
-		if err := s.durableLog.Append(e); err != nil {
-			durableLogFailuresTotal.Inc()
-			slog.Error("durable log append failed", "error", err, "note", "event kept in memory, not yet durable")
-		}
+		_ = s.durableLog.Append(e)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
@@ -76,7 +78,7 @@ func (s *Server) handleAlarms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alarms := deduplicateFalls(s.store.FallWarnEvents())
+	alarms := s.deduplication.snapshot(s.store)
 	filtered := make([]model.Alarm, 0, len(alarms))
 	for _, a := range alarms {
 		if a.TS.After(since) {

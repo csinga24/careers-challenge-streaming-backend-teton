@@ -15,11 +15,13 @@ import (
 )
 
 type Server struct {
-	mux        *http.ServeMux
-	store      store.Store
-	durableLog durablelog.Log // nil if running without one (tests, no DATABASE_URL)
-	broker     *alarmBroker
-	limiter    *intake.Limiter
+	mux           *http.ServeMux
+	store         store.Store
+	durableLog    durablelog.Log // nil if running without one (tests, no DATABASE_URL)
+	broker        *alarmBroker
+	limiter       *intake.Limiter
+	deduplication *alarmDeduplicationEngine
+	fallReceipts  *fallReceiptTracker
 }
 
 // New builds a Server backed by an in-memory store, with no durable log —
@@ -44,12 +46,15 @@ func NewWithDurableLog(st store.Store, log durablelog.Log) *Server {
 }
 
 func newServer(st store.Store, log durablelog.Log) *Server {
+	receipts := newFallReceiptTracker()
 	s := &Server{
-		mux:        http.NewServeMux(),
-		store:      st,
-		durableLog: log,
-		broker:     newAlarmBroker(),
-		limiter:    intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
+		mux:           http.NewServeMux(),
+		store:         st,
+		durableLog:    log,
+		broker:        newAlarmBroker(receipts),
+		limiter:       intake.NewLimiter(intake.DefaultHighCapacity, intake.DefaultNormalCapacity),
+		deduplication: newAlarmDeduplicationEngine(),
+		fallReceipts:  receipts,
 	}
 	activeLimiter.Store(s.limiter) // backs the streaming_intake_queue_depth gauge (metrics.go)
 	s.routes()

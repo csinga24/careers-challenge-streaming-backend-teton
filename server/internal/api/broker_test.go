@@ -7,18 +7,18 @@ import (
 	"teton-streaming-backend/internal/model"
 )
 
-func recvAlarm(t *testing.T, ch <-chan model.Alarm, timeout time.Duration) (model.Alarm, bool) {
+func recvAlarm(t *testing.T, ch <-chan deliveredAlarm, timeout time.Duration) (deliveredAlarm, bool) {
 	t.Helper()
 	select {
 	case a := <-ch:
 		return a, true
 	case <-time.After(timeout):
-		return model.Alarm{}, false
+		return deliveredAlarm{}, false
 	}
 }
 
 func TestAlarmBrokerDeliversNewAlarm(t *testing.T) {
-	b := newAlarmBroker()
+	b := newAlarmBroker(newFallReceiptTracker())
 	ch, unsubscribe := b.subscribe()
 	defer unsubscribe()
 
@@ -34,7 +34,7 @@ func TestAlarmBrokerDeliversNewAlarm(t *testing.T) {
 }
 
 func TestAlarmBrokerDoesNotRedeliverSeenAlarm(t *testing.T) {
-	b := newAlarmBroker()
+	b := newAlarmBroker(newFallReceiptTracker())
 	ch, unsubscribe := b.subscribe()
 	defer unsubscribe()
 
@@ -52,7 +52,7 @@ func TestAlarmBrokerDoesNotRedeliverSeenAlarm(t *testing.T) {
 }
 
 func TestAlarmBrokerMultipleSubscribers(t *testing.T) {
-	b := newAlarmBroker()
+	b := newAlarmBroker(newFallReceiptTracker())
 	ch1, unsub1 := b.subscribe()
 	defer unsub1()
 	ch2, unsub2 := b.subscribe()
@@ -69,7 +69,7 @@ func TestAlarmBrokerMultipleSubscribers(t *testing.T) {
 }
 
 func TestAlarmBrokerUnsubscribeStopsDelivery(t *testing.T) {
-	b := newAlarmBroker()
+	b := newAlarmBroker(newFallReceiptTracker())
 	ch, unsubscribe := b.subscribe()
 	unsubscribe()
 

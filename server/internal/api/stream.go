@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
-	"time"
-
-	"teton-streaming-backend/internal/model"
 )
 
 // handleAlarmsStream is the real-time SSE alarm feed. A Last-Event-ID
 // header resumes from that cursor: backlog since then replays before the
 // stream continues live.
+//
+// The cursor is the broker's own monotonic publish-order sequence (see
+// broker.go's package comment for why it can't be the alarm's ts): the
+// SSE `id:` line carries that sequence, not event_id, so a client's
+// Last-Event-ID round-trips it back to us as the resume point.
 func (s *Server) handleAlarmsStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -27,15 +28,16 @@ func (s *Server) handleAlarmsStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Subscribe before replaying backlog so nothing published concurrently
+	// with the replay can slip through the gap; sent (keyed by event_id,
+	// unaffected by the seq change) drops the resulting duplicate if the
+	// same alarm shows up on both paths.
 	ch, unsubscribe := s.broker.subscribe()
 	defer unsubscribe()
 
 	sent := make(map[string]bool)
-	if cursor, ok := eventIDTS(r.Header.Get("Last-Event-ID")); ok {
-		for _, a := range deduplicateFalls(s.store.FallWarnEvents()) {
-			if !a.TS.After(cursor) {
-				continue
-			}
+	if cursor, ok := parseCursor(r.Header.Get("Last-Event-ID")); ok {
+		for _, a := range s.broker.historySince(cursor) {
 			if err := writeSSEAlarm(w, flusher, a); err != nil {
 				return
 			}
@@ -59,32 +61,39 @@ func (s *Server) handleAlarmsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeSSEAlarm(w http.ResponseWriter, flusher http.Flusher, a model.Alarm) error {
-	payload, err := json.Marshal(a)
+func writeSSEAlarm(w http.ResponseWriter, flusher http.Flusher, a deliveredAlarm) error {
+	payload, err := json.Marshal(a.Alarm)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "id: %s\nevent: alarm\ndata: %s\n\n", a.EventID, payload); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: alarm\ndata: %s\n\n", a.Seq, payload); err != nil {
 		return err
 	}
 	flusher.Flush()
 	return nil
 }
 
-// eventIDTS extracts the ts embedded in an alarm event_id
-// ("<device_id>-<unix_nanos>", see newAlarm), used to resume a stream
-// from Last-Event-ID. ok is false for an empty or malformed id.
-func eventIDTS(id string) (ts time.Time, ok bool) {
+// parseCursor reads a Last-Event-ID header back as the broker sequence
+// it was minted from (see writeSSEAlarm). ok is false for an empty or
+// malformed id, in which case the caller skips backlog replay entirely
+// and starts the subscriber live-only — the same fail-open behavior as
+// before, just on a parse failure instead of a missing header.
+//
+// Residual, honestly stated: the sequence is in-memory and resets to 0
+// on every process restart. A cursor held by a client across a hard
+// restart is being replayed against a different counter than the one
+// that minted it — it may resolve to the wrong point, or to nothing at
+// all if the new process hasn't published that many alarms yet. Closing
+// that gap needs the sequence (or the alarm history itself) to survive
+// a restart the way the event log already does; not done here — see
+// SUBMISSION.md.
+func parseCursor(id string) (seq int64, ok bool) {
 	if id == "" {
-		return time.Time{}, false
+		return 0, false
 	}
-	idx := strings.LastIndex(id, "-")
-	if idx < 0 {
-		return time.Time{}, false
-	}
-	n, err := strconv.ParseInt(id[idx+1:], 10, 64)
+	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
-		return time.Time{}, false
+		return 0, false
 	}
-	return time.Unix(0, n).UTC(), true
+	return n, true
 }

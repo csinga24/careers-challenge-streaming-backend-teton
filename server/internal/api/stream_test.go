@@ -81,8 +81,8 @@ func TestAlarmsStreamDeliversNewAlarm(t *testing.T) {
 	}
 
 	id, data := readSSEEvent(t, reader)
-	if !strings.HasPrefix(id, "dev_0001-") {
-		t.Errorf("expected id to start with dev_0001-, got %q", id)
+	if id != "1" {
+		t.Errorf("expected id to be the first published sequence (1), got %q", id)
 	}
 	if !strings.Contains(data, `"device_id":"dev_0001"`) {
 		t.Errorf("expected data to contain device_id, got %q", data)
@@ -114,13 +114,14 @@ func TestAlarmsStreamResumeFromLastEventID(t *testing.T) {
 		}
 	}
 
-	// Reconnect with a cursor from before both events, using the same
-	// "<anything>-<unix_nanos>" id format the server generates.
-	cursor := base.Add(-time.Minute)
-	lastEventID := "cursor-" + strconv.FormatInt(cursor.UnixNano(), 10)
+	// Give a flush tick time to discover and publish both falls (assigning
+	// them broker sequences 1 and 2) before anyone subscribes — this is
+	// what "generated during a gap" means: discovered while disconnected.
+	time.Sleep(2 * alarmFlushInterval)
 
+	// Reconnect with a cursor from before either sequence was assigned.
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/alarms/stream", nil)
-	req.Header.Set("Last-Event-ID", lastEventID)
+	req.Header.Set("Last-Event-ID", "0")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("stream request: %v", err)
@@ -128,12 +129,69 @@ func TestAlarmsStreamResumeFromLastEventID(t *testing.T) {
 	defer resp.Body.Close()
 	reader := bufio.NewReader(resp.Body)
 
-	id1, _ := readSSEEvent(t, reader)
-	id2, _ := readSSEEvent(t, reader)
-	if !strings.HasPrefix(id1, "dev_0001-") {
-		t.Errorf("expected first backlog event from dev_0001, got %q", id1)
+	id1, data1 := readSSEEvent(t, reader)
+	id2, data2 := readSSEEvent(t, reader)
+	if id1 != "1" || !strings.Contains(data1, `"device_id":"dev_0001"`) {
+		t.Errorf("expected seq 1 from dev_0001 first, got id=%q data=%q", id1, data1)
 	}
-	if !strings.HasPrefix(id2, "dev_0002-") {
-		t.Errorf("expected second backlog event from dev_0002, got %q", id2)
+	if id2 != "2" || !strings.Contains(data2, `"device_id":"dev_0002"`) {
+		t.Errorf("expected seq 2 from dev_0002 second, got id=%q data=%q", id2, data2)
+	}
+}
+
+// TestAlarmsStreamResumeSurvivesLateReplayAfterDiscovery reproduces the
+// exact gap the ts-based cursor used to have: an alarm whose event ts is
+// old (a late-replayed fall from an offline device) but that is only
+// *discovered* — and therefore only published — after a client's cursor
+// was minted. A ts-based cursor would filter it out of backlog as "too
+// old" while the live path also skips it (already in broker.seen),
+// losing it permanently. The seq-based cursor must still deliver it,
+// because "discovered after your cursor" is exactly what it tracks.
+func TestAlarmsStreamResumeSurvivesLateReplayAfterDiscovery(t *testing.T) {
+	s := New()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	// A normal, recent fall — discovered and published first, seq 1.
+	recent := time.Now().UTC().Add(-time.Second)
+	postFall(t, ts.URL, "dev_0001", "room_14", recent, 0.9)
+	time.Sleep(2 * alarmFlushInterval)
+
+	// Client connects, immediately gets seq 1 live, and remembers seq 1
+	// as its cursor for a future reconnect.
+	cursor := int64(1)
+
+	// Now an offline device reconnects and replays a fall from long
+	// before the client's cursor was set — old ts, but not yet seen by
+	// the broker, so it's a brand-new discovery once it lands.
+	late := time.Now().UTC().Add(-30 * time.Minute)
+	postFall(t, ts.URL, "dev_0002", "room_14", late, 0.9)
+	time.Sleep(2 * alarmFlushInterval)
+
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/alarms/stream", nil)
+	req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+
+	id, data := readSSEEvent(t, reader)
+	if id != "2" || !strings.Contains(data, `"device_id":"dev_0002"`) {
+		t.Fatalf("expected the late-replayed dev_0002 alarm (seq 2) to survive the reconnect, got id=%q data=%q", id, data)
+	}
+}
+
+func postFall(t *testing.T, baseURL, deviceID, roomID string, ts time.Time, confidence float64) {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/events", "application/json", strings.NewReader(
+		`{"device_id":"`+deviceID+`","room_id":"`+roomID+`","type":"fall_warn","ts":"`+ts.Format(time.RFC3339Nano)+`","seq":1,"confidence":`+strconv.FormatFloat(confidence, 'f', 2, 64)+`}`))
+	if err != nil {
+		t.Fatalf("post fall_warn: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("post fall_warn status = %d, want 202", resp.StatusCode)
 	}
 }

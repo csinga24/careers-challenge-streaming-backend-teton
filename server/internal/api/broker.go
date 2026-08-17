@@ -1,6 +1,7 @@
 package api
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -12,19 +13,30 @@ const subscriberBufferSize = 64
 // alarmFlushInterval bounds how stale the live feed can be.
 const alarmFlushInterval = 200 * time.Millisecond
 
+// deliveredAlarm is what actually goes out over the broker: the alarm
+// plus the monotonic publish-order sequence number it was assigned.
+type deliveredAlarm struct {
+	model.Alarm
+	Seq int64
+}
+
 // alarmBroker fans newly-detected alarms out to subscribed SSE streams,
 // deduplicating by event_id so a jittered event that merges into an
 // already-broadcast cluster isn't re-sent.
 type alarmBroker struct {
 	mu          sync.Mutex
+	nextSeq     int64
 	seen        map[string]bool
-	subscribers map[chan model.Alarm]struct{}
+	history     []deliveredAlarm // ordered by Seq, oldest first
+	subscribers map[chan deliveredAlarm]struct{}
+	receipts    *fallReceiptTracker // ingest-time lookups for alarmPublishLatencySeconds; nil-safe
 }
 
-func newAlarmBroker() *alarmBroker {
+func newAlarmBroker(receipts *fallReceiptTracker) *alarmBroker {
 	return &alarmBroker{
 		seen:        make(map[string]bool),
-		subscribers: make(map[chan model.Alarm]struct{}),
+		subscribers: make(map[chan deliveredAlarm]struct{}),
+		receipts:    receipts,
 	}
 }
 
@@ -34,16 +46,25 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	now := time.Now()
 	for _, a := range alarms {
 		if b.seen[a.EventID] {
 			continue
 		}
 		b.seen[a.EventID] = true
+		b.nextSeq++
+		da := deliveredAlarm{Alarm: a, Seq: b.nextSeq}
+		b.history = append(b.history, da)
 		alarmsEmittedTotal.Inc()
 		alarmsEmittedCount.Add(1)
+		if b.receipts != nil {
+			if latency, ok := b.receipts.takeLatency(a.EventID, now); ok {
+				alarmPublishLatencySeconds.Observe(latency.Seconds())
+			}
+		}
 		for ch := range b.subscribers {
 			select {
-			case ch <- a:
+			case ch <- da:
 			default:
 				// Slow subscriber; drop rather than block ingestion.
 			}
@@ -51,10 +72,24 @@ func (b *alarmBroker) publishNew(alarms []model.Alarm) {
 	}
 }
 
+// historySince returns every published alarm with Seq > cursor, in
+// publish order. Used to replay backlog to a reconnecting SSE client.
+func (b *alarmBroker) historySince(cursor int64) []deliveredAlarm {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// history is append-ordered by increasing Seq, so the first entry
+	// past the cursor starts the slice to return.
+	i := sort.Search(len(b.history), func(i int) bool { return b.history[i].Seq > cursor })
+	out := make([]deliveredAlarm, len(b.history)-i)
+	copy(out, b.history[i:])
+	return out
+}
+
 // subscribe registers a new SSE subscriber and returns its channel plus
 // an unsubscribe function that must be called when the stream ends.
-func (b *alarmBroker) subscribe() (<-chan model.Alarm, func()) {
-	ch := make(chan model.Alarm, subscriberBufferSize)
+func (b *alarmBroker) subscribe() (<-chan deliveredAlarm, func()) {
+	ch := make(chan deliveredAlarm, subscriberBufferSize)
 	b.mu.Lock()
 	b.subscribers[ch] = struct{}{}
 	b.mu.Unlock()
@@ -75,9 +110,10 @@ func (s *Server) flushAlarmsLoop() {
 	defer ticker.Stop()
 	for range ticker.C {
 		s.flushAlarmsOnce()
+		s.fallReceipts.sweep(fallReceiptMaxAge, time.Now())
 	}
 }
 
 func (s *Server) flushAlarmsOnce() {
-	s.broker.publishNew(deduplicateFalls(s.store.FallWarnEvents()))
+	s.broker.publishNew(s.deduplication.snapshot(s.store))
 }
