@@ -3,6 +3,7 @@ package durablelog
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,13 @@ const (
 	// pgFlushInterval bounds how many recently-accepted events can be
 	// lost to an unclean kill before they're durably written.
 	pgFlushInterval = 10 * time.Millisecond
+	// pgFlushRetries is how many times a failed CopyFrom is retried
+	// before the batch is logged, counted, and dropped. Transient
+	// (connection blip, brief Postgres unavailability) errors get a
+	// chance to clear; a batch is only ever actually lost after all of
+	// these fail.
+	pgFlushRetries      = 3
+	pgFlushRetryBackoff = 25 * time.Millisecond
 )
 
 // PostgresLog is a durablelog.Log backed by Postgres.
@@ -67,8 +75,25 @@ func (l *PostgresLog) flushLoop() {
 			payload, _ := json.Marshal(e)
 			rows[i] = []any{payload}
 		}
-		_, _ = l.pool.CopyFrom(context.Background(),
-			pgx.Identifier{"events"}, []string{"payload"}, pgx.CopyFromRows(rows))
+
+		var err error
+		for attempt := 0; attempt <= pgFlushRetries; attempt++ {
+			if attempt > 0 {
+				time.Sleep(pgFlushRetryBackoff * time.Duration(attempt))
+			}
+			_, err = l.pool.CopyFrom(context.Background(),
+				pgx.Identifier{"events"}, []string{"payload"}, pgx.CopyFromRows(rows))
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			// Every retry failed: these events are durably gone. They're
+			// still served from the in-memory store for the life of this
+			// process, but won't survive a restart. Logged, not swallowed.
+			slog.Error("durable log flush failed after retries, batch dropped",
+				"error", err, "events_lost", len(batch), "attempts", pgFlushRetries+1)
+		}
 		batch = batch[:0]
 	}
 
